@@ -35,7 +35,7 @@ for filename in os.listdir('./cogs'):
 
 @client.event
 async def on_ready():
-    await client.change_presence(status=discord.Status.online, activity=discord.Game("ConstantiamPE+"))
+    await client.change_presence(status=discord.Status.online)
     print('Bot online')
     await asyncio.sleep(300)
     restart_program(0.65)
