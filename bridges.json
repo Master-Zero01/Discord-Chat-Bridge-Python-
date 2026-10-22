@@ -1,0 +1,10 @@
+{
+  "bridges": [
+    {
+      "name": "Test",
+      "channels": [1081119022357172294, 1170896341896015883],
+      "enabled": true,
+      "show_source": false
+    }
+  ]
+}

@@ -1,47 +1,110 @@
-# Original code by Baghi#5121, edited by _MasterZero#5029
+from __future__ import annotations
+
+import logging
+import sys
 
 import discord
-import asyncio
 from discord.ext import commands
-import os
-import sys
-import config
 
-# Connecting bot commands
-client = commands.Bot(command_prefix='.')
+from config import load_bridge_config, load_settings
 
-@client.command()
-async def load(ctx, extension):
-    client.load_extension(f'cogs.{extension}')
-    await ctx.send('Cogs are loaded')
 
-@client.command()
-async def unload(ctx, extension):
-    client.unload_extension(f'cogs.{extension}')
-    await ctx.send('Cogs are unloaded')
+def configure_logging(level: str) -> None:
+    numeric_level = getattr(logging, level.upper(), logging.INFO)
+    logging.basicConfig(
+        level=numeric_level,
+        format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    logging.getLogger("discord.http").setLevel(logging.WARNING)
 
-@client.command()
-async def reload(ctx, extension):
-    client.unload_extension(f'cogs.{extension}')
-    client.load_extension(f'cogs.{extension}')
-    await ctx.send('Cogs are reloaded')
 
-# Connections
-for filename in os.listdir('./cogs'):
-    if filename.endswith('.py'):
-        cog_name = filename[:-3]  # Remove the file extension (.py)
-        if cog_name in config.cogs:
-            client.load_extension(f"cogs.{cog_name}")
+class ChatBridgeBot(commands.Bot):
+    def __init__(self) -> None:
+        self.settings = load_settings()
+        # Fail before logging in if the bridge JSON is missing or malformed.
+        load_bridge_config(self.settings.bridge_config_path)
+        intents = discord.Intents.default()
+        intents.message_content = True
+        super().__init__(
+            command_prefix=self.settings.prefix,
+            intents=intents,
+            help_command=None,
+            allowed_mentions=discord.AllowedMentions.none(),
+            case_insensitive=True,
+        )
 
-@client.event
-async def on_ready():
-    await client.change_presence(status=discord.Status.online)
-    print('Bot online')
-    await asyncio.sleep(300)
-    restart_program(0.65)
+    async def setup_hook(self) -> None:
+        await self.load_extension("cogs.bridge")
 
-def restart_program():
-    python = sys.executable
-    os.execl(python, python, *sys.argv)
 
-client.run(config.token)
+bot: ChatBridgeBot | None = None
+
+
+async def handle_command_error(ctx: commands.Context, error: commands.CommandError) -> None:
+    if isinstance(error, commands.CommandNotFound):
+        return
+    if isinstance(error, commands.CheckFailure):
+        await ctx.reply(
+            "You need the **Manage Server** permission (or to be listed in `BOT_OWNER_IDS`) to do that.",
+            mention_author=False,
+        )
+        return
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.reply(f"Missing argument: `{error.param.name}`.", mention_author=False)
+        return
+    if isinstance(error, commands.BadArgument):
+        await ctx.reply("I couldn't understand one of those arguments.", mention_author=False)
+        return
+
+    logging.getLogger("chatbridge.commands").error(
+        "Unhandled command error",
+        exc_info=(type(error), error, error.__traceback__),
+    )
+    await ctx.reply("That command failed. Check the bot logs for details.", mention_author=False)
+
+
+def main() -> int:
+    global bot
+    try:
+        bot = ChatBridgeBot()
+    except (RuntimeError, ValueError) as exc:
+        print(f"Configuration error: {exc}", file=sys.stderr)
+        return 2
+
+    configure_logging(bot.settings.log_level)
+
+    @bot.event
+    async def on_ready() -> None:
+        logging.getLogger("chatbridge").info(
+            "Connected as %s (ID: %s) | discord.py %s",
+            bot.user,
+            bot.user.id if bot.user else "unknown",
+            discord.__version__,
+        )
+        logging.getLogger("chatbridge").info(
+            "Prefix: %r | Bridge config: %s",
+            bot.settings.prefix,
+            bot.settings.bridge_config_path,
+        )
+
+    @bot.event
+    async def on_command_error(
+        ctx: commands.Context, error: commands.CommandError
+    ) -> None:
+        await handle_command_error(ctx, error)
+
+    try:
+        bot.run(bot.settings.token, log_handler=None)
+    except KeyboardInterrupt:
+        return 0
+    except discord.LoginFailure:
+        logging.getLogger("chatbridge").error(
+            "Discord rejected the token. Check BOT_TOKEN in your .env file."
+        )
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
