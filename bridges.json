@@ -2,7 +2,7 @@
   "bridges": [
     {
       "name": "Test",
-      "channels": [1081119022357172294, 1170896341896015883],
+      "channels": [11111111111111111111, 11111111111111111111],
       "enabled": true,
       "show_source": false
     }
